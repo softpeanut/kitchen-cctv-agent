@@ -1,0 +1,8 @@
+[
+  {
+    "id": "public-cabinet-state",
+    "video_id": "nvidia-close-cabinet-rgb",
+    "type": "yes_no",
+    "question": "At 00:11, is the upper wall cabinet door visibly closed?"
+  }
+]
