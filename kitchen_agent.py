@@ -19,6 +19,7 @@ CONTACT_ROWS = 2
 CONTACT_WIDTH = 1_200
 EXPLICIT_TIME_RE = re.compile(r"(?<!\d)(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?!\d)")
 EVIDENCE_SECONDS_RE = re.compile(r"^\s*(?:t\s*=\s*)?(\d+(?:\.\d+)?)\s*s?\s*$", re.IGNORECASE)
+STRUCTURED_OBJECT_TYPES = {"object", "structured_object", "short_structured_object"}
 
 
 class InputError(ValueError):
@@ -233,9 +234,25 @@ def normalize_answer(raw: Mapping[str, Any], question: Question) -> tuple[Any, f
             (choice for choice in question.choices if choice.lower() == normalized.lower()), None
         )
         return (match if match is not None else "not_visible"), confidence
+    if question.type in STRUCTURED_OBJECT_TYPES:
+        if isinstance(answer, dict) and answer and _is_json_value(answer):
+            return answer, confidence
+        return "not_visible", 0.0
     if isinstance(answer, (str, int, float)):
         return answer, confidence
     return "not_visible", 0.0
+
+
+def _is_json_value(value: Any) -> bool:
+    if value is None or isinstance(value, (str, bool, int)):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, list):
+        return all(_is_json_value(item) for item in value)
+    if isinstance(value, dict):
+        return all(isinstance(key, str) and _is_json_value(item) for key, item in value.items())
+    return False
 
 
 def parse_evidence_seconds(value: Any) -> float | None:
@@ -344,6 +361,8 @@ def answer_type_instruction(question: Question) -> str:
         return 'answer must be seconds as a number or "not_visible"'
     if question.type == "multiple_choice" and question.choices:
         return f'answer must be exactly one of {list(question.choices)!r} or "not_visible"'
+    if question.type in STRUCTURED_OBJECT_TYPES:
+        return 'answer must be a non-empty JSON object or "not_visible"'
     return 'answer must be a short scalar value or "not_visible"'
 
 

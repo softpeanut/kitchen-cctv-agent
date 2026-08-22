@@ -11,6 +11,7 @@ There are no existing integration points: this is a greenfield submission. The e
 - Route temporal/event questions through a sparse scan, then refine candidate windows.
 - Never exceed the scaled frame budget; local inference records `$0` API cost.
 - Emit one schema-valid answer per input question, including evidence or `not_visible`.
+- Preserve non-empty JSON objects for the published structured-object answer type; reject malformed or non-finite object values as `not_visible`.
 - Record runtime, frames inspected, model calls, model identity, and question-level traces.
 - Tests use hand-written expected outputs rather than asking the production model to validate itself.
 
@@ -45,18 +46,21 @@ P25     IF budget is exhausted -> emit `not_visible` with budget-exhausted trace
 P26   CALL VLM with question, allowed answer type, timestamps, and selected images
 P27     IF call or strict JSON parse fails -> emit `not_visible` with failure trace
 P28   normalize answer to the declared type and clamp confidence to [0,1]
-P29   IF answer is unsupported by a selected timestamp
-P30     emit `not_visible` and empty evidence
-P31   ELSE
-P32     attach selected evidence span and append the answer
-P33 WRITE answers JSON atomically
-P34   IF write fails -> exit 1; do not claim a completed run
-P35 WRITE run log JSON atomically
-P36   IF write fails -> remove neither output; exit 1 and report incomplete audit log
-P37 return exit 0
+P29   IF type is object, structured_object, or short_structured_object
+P30     IF answer is a non-empty JSON object containing only finite JSON values -> preserve it
+P31     ELSE -> replace it with `not_visible`
+P32   IF answer is unsupported by a selected timestamp
+P33     emit `not_visible` and empty evidence
+P34   ELSE
+P35     attach selected evidence span and append the answer
+P36 WRITE answers JSON atomically
+P37   IF write fails -> exit 1; do not claim a completed run
+P38 WRITE run log JSON atomically
+P39   IF write fails -> remove neither output; exit 1 and report incomplete audit log
+P40 return exit 0
 ```
 
-Completeness check: inputs, every fallible IO/model call, both arms of each decision, frame exhaustion, parse failure, and both output writes are explicit. No authorization is required. Concurrency is intentionally absent so one process owns the frame counter and output files. All acceptance criteria map to P2-P36.
+Completeness check: inputs, every fallible IO/model call, both arms of each decision, frame exhaustion, parse failure, structured-object validation, and both output writes are explicit. No authorization is required. Concurrency is intentionally absent so one process owns the frame counter and output files. All acceptance criteria map to P2-P40.
 
 ## Proposed flow
 

@@ -13,6 +13,7 @@ from kitchen_agent import (
     Question,
     RunStats,
     VideoInfo,
+    answer_type_instruction,
     atomic_write_json,
     extract_explicit_timestamp,
     load_questions,
@@ -61,6 +62,25 @@ def test_parse_json_object_ignores_surrounding_prose() -> None:
 def test_normalize_answer_rejects_invalid_count() -> None:
     question = Question("q", "v", "count", "How many?")
     assert normalize_answer({"answer": -2, "confidence": 4}, question) == ("not_visible", 1.0)
+
+
+@pytest.mark.parametrize("question_type", ["object", "structured_object", "short_structured_object"])
+def test_normalize_answer_preserves_structured_object(question_type: str) -> None:
+    question = Question("q", "v", question_type, "Describe the handoff state")
+    answer = {"sealed": True, "container_count": 2, "labels": ["ready", "pickup"]}
+
+    assert normalize_answer({"answer": answer, "confidence": 0.8}, question) == (answer, 0.8)
+    assert "non-empty JSON object" in answer_type_instruction(question)
+
+
+@pytest.mark.parametrize("answer", [{}, {"duration": float("nan")}, ["not", "an", "object"]])
+def test_normalize_answer_rejects_invalid_structured_object(answer: object) -> None:
+    question = Question("q", "v", "structured_object", "Describe the handoff state")
+
+    assert normalize_answer({"answer": answer, "confidence": 0.8}, question) == (
+        "not_visible",
+        0.0,
+    )
 
 
 @pytest.mark.parametrize(
