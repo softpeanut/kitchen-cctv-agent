@@ -253,6 +253,46 @@ def test_headwear_count_uses_negative_qualification_gate(
     assert traces[0]["errors"] == []
 
 
+def test_headwear_count_asks_for_count_after_positive_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FakeFrameStore:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def frame(self, video_id: str, timestamp: float) -> FrameRef:
+            return FrameRef(video_id, timestamp, tmp_path / f"{timestamp:.2f}.jpg")
+
+    class FakeBackend:
+        model_id = "fake"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def ask(self, _images: object, prompt: str) -> str:
+            self.calls += 1
+            answer: str | int = "yes" if "Qualification gate" in prompt else 2
+            return json.dumps({"answer": answer, "confidence": 0.8, "evidence_timestamp": 5})
+
+    monkeypatch.setattr("kitchen_agent.FrameStore", FakeFrameStore)
+    monkeypatch.setattr(
+        "kitchen_agent.contact_sheet", lambda _frames, output, _title, **_kwargs: output
+    )
+    backend = FakeBackend()
+
+    answers, _traces = answer_questions(
+        [Question("q", "v", "count", "At 00:05, how many people wear a cap or hairnet?")],
+        {"v": VideoInfo("v", tmp_path / "v.mp4", 10.0, 30.0)},
+        backend,
+        tmp_path,
+        10,
+        RunStats(0.0),
+    )
+
+    assert answers[0]["answer"] == 2
+    assert backend.calls == 2
+
+
 def test_questions_share_small_frame_budget_without_starving_temporal_route(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

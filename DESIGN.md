@@ -41,6 +41,9 @@ P19     combine them into one timestamped evidence sheet
 P20   enforce remaining frame budget before every sample
 P21     IF budget is exhausted -> emit `not_visible` with budget-exhausted trace
 P22   combine selected frames into one timestamped evidence sheet and CALL VLM once
+P22a  IF this is a headwear count, first ask whether any person qualifies
+P22b    IF no person qualifies -> return count 0 from that evidence
+P22c    ELSE -> ask the typed numeric count question
 P23     IF call or strict JSON parse fails -> emit `not_visible` with failure trace
 P24   normalize answer to the declared type and clamp confidence to [0,1]
 P24a  accept evidence timestamps as seconds or validated MM:SS/HH:MM:SS clock text
