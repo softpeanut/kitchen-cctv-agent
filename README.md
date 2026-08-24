@@ -44,7 +44,7 @@ was also replayed against Pexels video 8627112 using
 [`validation-pexels.questions.json`](validation-pexels.questions.json). The source shows a
 bareheaded chef cutting vegetables and is free to use under the Pexels license. The cached-only
 run returned the expected `no` for cap/hairnet and `yes` for cutting, used the full 6-frame scaled
-budget across both questions, made 2 local model calls, completed in 46.339 seconds, and retained
+budget across both questions, made 2 local model calls, completed in 78.578 seconds, and retained
 `$0.00` estimated API cost. The temporary source MP4 SHA-256 was
 `34f610feabd26df1273d6f97105213bef8d7f91e382e870511fbf31838c81a1e`.
 
