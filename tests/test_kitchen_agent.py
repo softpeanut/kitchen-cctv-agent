@@ -345,9 +345,8 @@ def test_headwear_yes_no_uses_qualification_result(
 
     assert answers[0]["answer"] == "no"
     assert len(backend.prompts) == 1
-    assert "visible person described by the question" in backend.prompts[0]
-    assert "working at or nearest that area" in backend.prompts[0]
-    assert "mean no" in backend.prompts[0]
+    assert "person described by the question" in backend.prompts[0]
+    assert "described by a station or work area" in backend.prompts[0]
     assert traces[0]["qualification_output"].startswith('{"answer":"no"')
     assert traces[0]["errors"] == []
 
