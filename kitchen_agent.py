@@ -182,7 +182,7 @@ def question_route(question: Question) -> str:
     if extract_explicit_timestamp(question.question) is not None:
         lowered = question.question.lower()
         if question.type in {"ocr", "visibility", "not_visible"} or any(
-            token in lowered for token in ("readable", "visible", "number", "label", "text")
+            token in lowered for token in ("readable", "number", "label", "text")
         ):
             return "ocr_at_time"
         return "state_at_time"
@@ -380,7 +380,7 @@ def answer_type_instruction(question: Question) -> str:
 def question_specific_guidance(question: Question) -> str:
     lowered = question.question.lower()
     if any(term in lowered for term in ("cap", "hairnet", "headwear", "head covering")):
-        return (
+        guidance = (
             " For headwear checks, inspect each visible person's head separately. "
             "A bare or bald head, visible hair, a hood resting behind the head, or a uniform "
             "collar is not a cap or hairnet. Count or answer yes only when a fabric or mesh "
@@ -388,6 +388,15 @@ def question_specific_guidance(question: Question) -> str:
             "not wearing a cap or hairnet. Never infer headwear merely because the person is "
             "a chef or wears a kitchen uniform."
         )
+        if question.type == "count":
+            guidance += (
+                " For a count question, count only people who visibly meet that headwear "
+                "condition, not the total number of visible people. Return 0 when people are "
+                "visible but none wears a qualifying covering. Work person by person before "
+                "returning the JSON number: two bareheaded people means 0; three people with "
+                "exactly one visible cap means 1."
+            )
+        return guidance
     return ""
 
 
@@ -457,10 +466,33 @@ def answer_questions(
                 "confidence must be a JSON number from 0.0 through 1.0, never a word. "
                 "evidence_timestamp must be one timestamp printed on an image, or null for not_visible."
             )
-            stats.model_calls += 1
-            raw_text = backend.ask(final_sheets, prompt)
-            trace["answer_output"] = raw_text
-            parsed = parse_json_object(raw_text)
+            parsed: dict[str, Any] | None = None
+            if question.type == "count" and guidance:
+                gate_prompt = (
+                    "Qualification gate for a headwear count. Inspect every visible person's head. "
+                    "Does at least one visible person wear a fabric or mesh cap or hairnet? "
+                    "A bare head, visible hair or scalp, hood behind the head, and uniform collar "
+                    "do not qualify. Return JSON only with keys answer, confidence, "
+                    'evidence_timestamp; answer must be "yes", "no", or "not_visible".'
+                )
+                stats.model_calls += 1
+                gate_raw = backend.ask(final_sheets, gate_prompt)
+                trace["qualification_output"] = gate_raw
+                gate_parsed = parse_json_object(gate_raw)
+                gate_question = Question(question.id, question.video_id, "yes_no", gate_prompt)
+                gate_answer, gate_confidence = normalize_answer(gate_parsed, gate_question)
+                if gate_answer == "no":
+                    parsed = {
+                        "answer": 0,
+                        "confidence": gate_confidence,
+                        "evidence_timestamp": gate_parsed.get("evidence_timestamp"),
+                    }
+
+            if parsed is None:
+                stats.model_calls += 1
+                raw_text = backend.ask(final_sheets, prompt)
+                trace["answer_output"] = raw_text
+                parsed = parse_json_object(raw_text)
             answer, confidence = normalize_answer(parsed, question)
             evidence_timestamp = parse_evidence_seconds(parsed.get("evidence_timestamp"))
             inspected = [frame.timestamp for frame in selected]

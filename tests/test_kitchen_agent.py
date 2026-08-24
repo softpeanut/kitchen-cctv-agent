@@ -56,6 +56,11 @@ def test_question_route_prefers_declared_ocr_at_explicit_time() -> None:
     assert question_route(question) == "ocr_at_time"
 
 
+def test_question_route_does_not_treat_visible_people_as_ocr() -> None:
+    question = Question("q", "v", "count", "At 00:45, how many people are visible?")
+    assert question_route(question) == "state_at_time"
+
+
 def test_parse_json_object_ignores_surrounding_prose() -> None:
     assert (
         parse_json_object('result follows\n{"answer":"yes","confidence":0.8}\ndone')["answer"]
@@ -75,6 +80,15 @@ def test_headwear_guidance_distinguishes_bare_head_from_covering() -> None:
     assert "bare or bald head" in guidance
     assert "fabric or mesh covering" in guidance
     assert "scalp skin is visible" in guidance
+
+
+def test_headwear_count_guidance_counts_only_qualifying_people() -> None:
+    guidance = question_specific_guidance(
+        Question("q", "v", "count", "How many people are wearing a cap or hairnet?")
+    )
+    assert "not the total number of visible people" in guidance
+    assert "Return 0" in guidance
+    assert "two bareheaded people means 0" in guidance
 
 
 @pytest.mark.parametrize(
@@ -195,6 +209,47 @@ def test_temporal_route_uses_one_model_call_and_one_evidence_sheet(
     assert backend.calls == 1
     assert backend.image_counts == [1]
     assert answers[0]["answer"] == "yes"
+    assert traces[0]["errors"] == []
+
+
+def test_headwear_count_uses_negative_qualification_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FakeFrameStore:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def frame(self, video_id: str, timestamp: float) -> FrameRef:
+            return FrameRef(video_id, timestamp, tmp_path / f"{timestamp:.2f}.jpg")
+
+    class FakeBackend:
+        model_id = "fake"
+
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        def ask(self, _images: object, prompt: str) -> str:
+            self.prompts.append(prompt)
+            return '{"answer":"no","confidence":0.9,"evidence_timestamp":5}'
+
+    monkeypatch.setattr("kitchen_agent.FrameStore", FakeFrameStore)
+    monkeypatch.setattr(
+        "kitchen_agent.contact_sheet", lambda _frames, output, _title, **_kwargs: output
+    )
+    backend = FakeBackend()
+
+    answers, traces = answer_questions(
+        [Question("q", "v", "count", "At 00:05, how many people wear a cap or hairnet?")],
+        {"v": VideoInfo("v", tmp_path / "v.mp4", 10.0, 30.0)},
+        backend,
+        tmp_path,
+        10,
+        RunStats(0.0),
+    )
+
+    assert answers[0]["answer"] == 0
+    assert len(backend.prompts) == 1
+    assert "Qualification gate" in backend.prompts[0]
     assert traces[0]["errors"] == []
 
 

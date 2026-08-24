@@ -10,5 +10,11 @@
     "video_id": "pexels-chef-cutting",
     "type": "yes_no",
     "question": "At 00:05, is the chef visibly cutting vegetables on the work surface?"
+  },
+  {
+    "id": "pexels-headwear-count",
+    "video_id": "pexels-chef-cutting",
+    "type": "count",
+    "question": "At 00:05, how many visible people are wearing a cap or hairnet?"
   }
 ]

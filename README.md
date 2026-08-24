@@ -48,6 +48,14 @@ budget across both questions, made 2 local model calls, completed in 78.578 seco
 `$0.00` estimated API cost. The temporary source MP4 SHA-256 was
 `34f610feabd26df1273d6f97105213bef8d7f91e382e870511fbf31838c81a1e`.
 
+An additional explicit-time oracle in
+[`validation-pexels-explicit.questions.json`](validation-pexels-explicit.questions.json) checks
+the semantic difference between people visible and people wearing qualifying headwear. A
+cached-only run returned `no` for cap/hairnet, `yes` for visible cutting, and `0` people wearing
+headwear. It used 3 unique frames, 3 local model calls, 48.700 seconds, and `$0.00` estimated API
+cost. The independently recorded expected values are preserved in
+[`validation-pexels-explicit.expected.json`](validation-pexels-explicit.expected.json).
+
 External contracts and implementation references:
 
 - Builderr challenge: https://builderr.ai/kitchen-video
