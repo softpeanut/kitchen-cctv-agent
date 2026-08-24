@@ -80,6 +80,9 @@ def test_headwear_guidance_distinguishes_bare_head_from_covering() -> None:
     assert "bare or bald head" in guidance
     assert "fabric or mesh covering" in guidance
     assert "scalp skin is visible" in guidance
+    assert "answer no" in guidance
+    assert "reserve not_visible" in guidance
+    assert "using or nearest that named area" in guidance
 
 
 def test_headwear_count_guidance_counts_only_qualifying_people() -> None:
@@ -250,6 +253,7 @@ def test_headwear_count_uses_negative_qualification_gate(
     assert answers[0]["answer"] == 0
     assert len(backend.prompts) == 1
     assert "Qualification gate" in backend.prompts[0]
+    assert "elapsed video time" in backend.prompts[0]
     assert "JSON number from 0.0 through 1.0" in backend.prompts[0]
     assert traces[0]["errors"] == []
 
@@ -299,7 +303,61 @@ def test_headwear_count_uses_typed_count_after_positive_gate(
     assert answers[0]["answer"] == 2
     assert len(backend.prompts) == 2
     assert "Qualification gate" in backend.prompts[0]
+    assert "elapsed video time" in backend.prompts[0]
     assert "non-negative integer" in backend.prompts[1]
+    assert "elapsed video time" in backend.prompts[1]
+    assert traces[0]["errors"] == []
+
+
+def test_headwear_count_retries_malformed_gate_with_neighbor_frames(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FakeFrameStore:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def frame(self, video_id: str, timestamp: float) -> FrameRef:
+            return FrameRef(video_id, timestamp, tmp_path / f"{timestamp:.2f}.jpg")
+
+    responses = iter(
+        [
+            "!!!!!!!!!!!!!!!!",
+            '{"answer":"no","confidence":0.9,"evidence_timestamp":4}',
+        ]
+    )
+
+    class FakeBackend:
+        model_id = "fake"
+
+        def ask(self, _images: object, _prompt: str) -> str:
+            return next(responses)
+
+    sheet_timestamps: list[list[float]] = []
+
+    def fake_contact_sheet(
+        frames: list[FrameRef], output: Path, _title: str, **_kwargs: object
+    ) -> Path:
+        sheet_timestamps.append([frame.timestamp for frame in frames])
+        return output
+
+    monkeypatch.setattr("kitchen_agent.FrameStore", FakeFrameStore)
+    monkeypatch.setattr("kitchen_agent.contact_sheet", fake_contact_sheet)
+    stats = RunStats(0.0)
+
+    answers, traces = answer_questions(
+        [Question("q", "v", "count", "At 00:05, how many people wear a cap or hairnet?")],
+        {"v": VideoInfo("v", tmp_path / "v.mp4", 10.0, 30.0)},
+        FakeBackend(),
+        tmp_path,
+        10,
+        stats,
+    )
+
+    assert answers[0]["answer"] == 0
+    assert stats.model_calls == 2
+    assert sheet_timestamps == [[5.0], [4.0, 6.0]]
+    assert traces[0]["qualification_output"] == "!!!!!!!!!!!!!!!!"
+    assert traces[0]["qualification_retry_output"].startswith('{"answer":"no"')
     assert traces[0]["errors"] == []
 
 

@@ -47,6 +47,7 @@ P22c    ELSE -> ask the typed numeric count question
 P23     IF call or strict JSON parse fails -> emit `not_visible` with failure trace
 P24   normalize answer to the declared type and clamp confidence to [0,1]
 P24a  accept evidence timestamps as seconds or validated MM:SS/HH:MM:SS clock text
+P24b  instruct the model to use only agent-added elapsed-time labels, never source wall clocks
 P25   IF type is object, structured_object, or short_structured_object
 P26     IF answer is a non-empty JSON object containing only finite JSON values -> preserve it
 P27     ELSE -> replace it with `not_visible`
@@ -105,3 +106,4 @@ Implementation risks:
 - P18/P22: model output may include prose around JSON; extraction is bounded to the first JSON object and then schema-validated. The temporal route uses one model call because repeated scouting calls caused reproducible generation degeneration on the local model.
 - P20: duplicate timestamps across questions can waste budget; a frame cache keyed by `(video, millisecond)` counts each decoded frame once.
 - P28: VLM confidence is not evidence. Answers without a timestamp selected from inspected frames are downgraded to `not_visible`.
+- P24b: source footage can contain a date or wall clock that conflicts with elapsed question time; prompts identify the agent-added black `t=X.XXs` panel label as the only evidence clock, while timestamp validation remains strict.

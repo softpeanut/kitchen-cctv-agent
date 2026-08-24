@@ -20,6 +20,11 @@ CONTACT_WIDTH = 1_200
 EXPLICIT_TIME_RE = re.compile(r"(?<!\d)(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?!\d)")
 EVIDENCE_SECONDS_RE = re.compile(r"^\s*(?:t\s*=\s*)?(\d+(?:\.\d+)?)\s*s?\s*$", re.IGNORECASE)
 STRUCTURED_OBJECT_TYPES = {"object", "structured_object", "short_structured_object"}
+EVIDENCE_CLOCK_RULE = (
+    "Question timestamps are elapsed video time. For evidence_timestamp, use only the black "
+    "t=X.XXs elapsed-time label added to each evidence panel; ignore any date or wall clock "
+    "recorded inside the source video. "
+)
 
 
 class InputError(ValueError):
@@ -386,7 +391,11 @@ def question_specific_guidance(question: Question) -> str:
             "collar is not a cap or hairnet. Count or answer yes only when a fabric or mesh "
             "covering is visibly worn on the head. If scalp skin is visible, that person is "
             "not wearing a cap or hairnet. Never infer headwear merely because the person is "
-            "a chef or wears a kitchen uniform."
+            "a chef or wears a kitchen uniform. When the relevant person's bare head, hair, or "
+            "scalp is visible, answer no; reserve not_visible for a head that is absent, fully "
+            "occluded, or too unclear to classify. If the question identifies a person by a "
+            "station or work area, inspect the visible person using or nearest that named area; "
+            "do not require the person's body to overlap the appliance exactly."
         )
         if question.type == "count":
             guidance += (
@@ -462,6 +471,7 @@ def answer_questions(
                 "person, object, or full event is not visibly supported, answer not_visible.\n"
                 f"Question: {question.question}\nType rule: {answer_type_instruction(question)}.\n"
                 f"Visual guidance:{guidance}\n"
+                f"{EVIDENCE_CLOCK_RULE}"
                 "Return JSON only with keys answer, confidence, evidence_timestamp. "
                 "confidence must be a JSON number from 0.0 through 1.0, never a word. "
                 "evidence_timestamp must be one timestamp printed on an image, or null for not_visible."
@@ -472,14 +482,33 @@ def answer_questions(
                     "Qualification gate for a headwear count. Inspect every visible person's head. "
                     "Does at least one visible person wear a fabric or mesh cap or hairnet? "
                     "A bare head, visible hair or scalp, hood behind the head, and uniform collar "
-                    "do not qualify. Return JSON only with keys answer, confidence, "
+                    f"do not qualify. {EVIDENCE_CLOCK_RULE}"
+                    "Return JSON only with keys answer, confidence, "
                     'evidence_timestamp; answer must be "yes", "no", or "not_visible". '
                     "confidence must be a JSON number from 0.0 through 1.0, never a word."
                 )
                 stats.model_calls += 1
                 gate_raw = backend.ask(final_sheets, gate_prompt)
                 trace["qualification_output"] = gate_raw
-                gate_parsed = parse_json_object(gate_raw)
+                try:
+                    gate_parsed = parse_json_object(gate_raw)
+                except ValueError:
+                    if len(selected) <= 1:
+                        raise
+                    retry_frames = [selected[0], selected[-1]]
+                    retry_sheets = [
+                        contact_sheet(
+                            retry_frames,
+                            work_dir / f"{question.id}-qualification-retry.jpg",
+                            f"Neighbor evidence for {question.id}",
+                            columns=len(retry_frames),
+                        )
+                    ]
+                    stats.model_calls += 1
+                    gate_raw = backend.ask(retry_sheets, gate_prompt)
+                    trace["qualification_retry_output"] = gate_raw
+                    gate_parsed = parse_json_object(gate_raw)
+                    final_sheets = retry_sheets
                 gate_question = Question(question.id, question.video_id, "yes_no", gate_prompt)
                 gate_answer, gate_confidence = normalize_answer(gate_parsed, gate_question)
                 if gate_answer == "no":
