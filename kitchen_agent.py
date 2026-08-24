@@ -410,20 +410,21 @@ def question_specific_guidance(question: Question) -> str:
 def headwear_qualification_prompt(question: Question) -> str:
     if question.type == "count":
         task = (
+            "Inspect every visible person's head. "
             "Does at least one visible person wear a fabric or mesh cap or hairnet? "
             'The answer must be "yes", "no", or "not_visible".'
         )
     else:
         task = (
-            f"Question: {question.question} Inspect the person identified by the question; when "
-            "the question names a station or work area, use the visible person using or nearest "
-            "that area. Does that person visibly wear a fabric or mesh cap or "
+            f"Question: {question.question} Identify the visible person described by the question. "
+            "If that person is described by a station or work area, use the person working at or "
+            "nearest that area. Does that person visibly wear a fabric or mesh cap or "
             'hairnet? The answer must be "yes", "no", or "not_visible".'
         )
     return (
-        "Headwear qualification. Inspect every relevant visible person's head. "
-        f"{task} A bare head, visible hair or scalp, hood behind the head, and uniform collar "
-        "do not qualify. Use not_visible only if the relevant person or head cannot be seen "
+        f"Headwear qualification. {task} A bare head, visible hair or scalp, hood behind the head, "
+        "and uniform collar do not qualify and mean no. Use not_visible only if the relevant "
+        "person or head cannot be seen "
         f"clearly. {EVIDENCE_CLOCK_RULE}"
         "Return JSON only with keys answer, confidence, evidence_timestamp. "
         "confidence must be a JSON number from 0.0 through 1.0, never a word."
