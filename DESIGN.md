@@ -63,7 +63,7 @@ P36 return exit 0
 
 Completeness check: inputs, every fallible IO/model call, both arms of each decision, shared-budget allocation, frame exhaustion, parse failure, structured-object validation, and both output writes are explicit. No authorization is required. Concurrency is intentionally absent so one process owns the frame counter and output files.
 
-## Proposed flow
+## Implemented flow
 
 ```mermaid
 flowchart TD
@@ -80,7 +80,12 @@ flowchart TD
     G --> I
     H --> I
     I -- no --> J["Emit not_visible with trace"]
-    I -- yes --> K["Run typed VLM query"]
+    I -- yes --> R{"Headwear count?"}
+    R -- no --> K["Run typed VLM query"]
+    R -- yes --> S["Run qualification gate"]
+    S --> T{"Any qualifying wearer?"}
+    T -- no --> M["Attach evidence count 0"]
+    T -- "yes / not_visible" --> K
     K --> L{"Valid supported JSON?"}
     L -- no --> J
     L -- yes --> M["Attach evidence answer"]

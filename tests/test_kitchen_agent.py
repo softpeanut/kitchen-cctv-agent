@@ -254,7 +254,7 @@ def test_headwear_count_uses_negative_qualification_gate(
     assert traces[0]["errors"] == []
 
 
-def test_headwear_count_asks_for_count_after_positive_gate(
+def test_headwear_count_uses_typed_count_after_positive_gate(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     class FakeFrameStore:
@@ -264,16 +264,22 @@ def test_headwear_count_asks_for_count_after_positive_gate(
         def frame(self, video_id: str, timestamp: float) -> FrameRef:
             return FrameRef(video_id, timestamp, tmp_path / f"{timestamp:.2f}.jpg")
 
+    responses = iter(
+        [
+            '{"answer":"yes","confidence":0.9,"evidence_timestamp":5}',
+            '{"answer":2,"confidence":0.8,"evidence_timestamp":5}',
+        ]
+    )
+
     class FakeBackend:
         model_id = "fake"
 
         def __init__(self) -> None:
-            self.calls = 0
+            self.prompts: list[str] = []
 
         def ask(self, _images: object, prompt: str) -> str:
-            self.calls += 1
-            answer: str | int = "yes" if "Qualification gate" in prompt else 2
-            return json.dumps({"answer": answer, "confidence": 0.8, "evidence_timestamp": 5})
+            self.prompts.append(prompt)
+            return next(responses)
 
     monkeypatch.setattr("kitchen_agent.FrameStore", FakeFrameStore)
     monkeypatch.setattr(
@@ -281,7 +287,7 @@ def test_headwear_count_asks_for_count_after_positive_gate(
     )
     backend = FakeBackend()
 
-    answers, _traces = answer_questions(
+    answers, traces = answer_questions(
         [Question("q", "v", "count", "At 00:05, how many people wear a cap or hairnet?")],
         {"v": VideoInfo("v", tmp_path / "v.mp4", 10.0, 30.0)},
         backend,
@@ -291,7 +297,10 @@ def test_headwear_count_asks_for_count_after_positive_gate(
     )
 
     assert answers[0]["answer"] == 2
-    assert backend.calls == 2
+    assert len(backend.prompts) == 2
+    assert "Qualification gate" in backend.prompts[0]
+    assert "non-negative integer" in backend.prompts[1]
+    assert traces[0]["errors"] == []
 
 
 def test_questions_share_small_frame_budget_without_starving_temporal_route(
