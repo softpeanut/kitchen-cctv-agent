@@ -8,16 +8,21 @@ import pytest
 
 from kitchen_agent import (
     BudgetExhausted,
+    FrameRef,
     FrameStore,
     InputError,
     Question,
     RunStats,
     VideoInfo,
+    answer_questions,
     answer_type_instruction,
     atomic_write_json,
+    evenly_bounded_items,
     extract_explicit_timestamp,
     load_questions,
+    merge_candidate_timestamps,
     normalize_answer,
+    parse_candidate_timestamps,
     parse_evidence_seconds,
     parse_json_object,
     question_route,
@@ -59,12 +64,19 @@ def test_parse_json_object_ignores_surrounding_prose() -> None:
     )
 
 
+def test_parse_candidate_timestamps_accepts_model_array_variant() -> None:
+    text = '```json\n[{"timestamp": 12.5, "reason": "event"}]\n```'
+    assert parse_candidate_timestamps(text, 20.0) == [12.5]
+
+
 def test_normalize_answer_rejects_invalid_count() -> None:
     question = Question("q", "v", "count", "How many?")
     assert normalize_answer({"answer": -2, "confidence": 4}, question) == ("not_visible", 1.0)
 
 
-@pytest.mark.parametrize("question_type", ["object", "structured_object", "short_structured_object"])
+@pytest.mark.parametrize(
+    "question_type", ["object", "structured_object", "short_structured_object"]
+)
 def test_normalize_answer_preserves_structured_object(question_type: str) -> None:
     question = Question("q", "v", question_type, "Describe the handoff state")
     answer = {"sealed": True, "container_count": 2, "labels": ["ready", "pickup"]}
@@ -120,3 +132,61 @@ def test_frame_store_enforces_unique_frame_budget(
     with pytest.raises(BudgetExhausted):
         store.frame("v", 2.0)
     assert stats.frames_processed == 1
+
+
+def test_merge_candidate_timestamps_preserves_sheet_order_and_deduplicates() -> None:
+    assert merge_candidate_timestamps([[10.0], [10.2], [20.0], [30.0], [40.0]]) == [
+        10.0,
+        30.0,
+        40.0,
+    ]
+
+
+def test_evenly_bounded_items_keeps_endpoints() -> None:
+    selected = evenly_bounded_items(list(range(48)), 18)
+    assert selected[0] == 0
+    assert selected[-1] == 47
+    assert len(selected) == 18
+    assert evenly_bounded_items(list(range(5)), 1) == [2]
+
+
+def test_temporal_scout_failure_does_not_abort_remaining_sheets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FakeFrameStore:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def frame(self, video_id: str, timestamp: float) -> FrameRef:
+            return FrameRef(video_id, timestamp, tmp_path / f"{timestamp:.2f}.jpg")
+
+    class FakeBackend:
+        model_id = "fake"
+
+        def __init__(self) -> None:
+            self.scout_calls = 0
+
+        def ask(self, _images: object, prompt: str) -> str:
+            if "locating evidence" in prompt:
+                self.scout_calls += 1
+                if self.scout_calls == 1:
+                    raise RuntimeError("one corrupt contact sheet")
+                return '{"candidates":[]}'
+            return '{"answer":"yes","confidence":0.8,"evidence_timestamp":0}'
+
+    monkeypatch.setattr("kitchen_agent.FrameStore", FakeFrameStore)
+    monkeypatch.setattr("kitchen_agent.contact_sheet", lambda _frames, output, _title: output)
+    backend = FakeBackend()
+
+    answers, traces = answer_questions(
+        [Question("q", "v", "yes_no", "Did the worker perform the action?")],
+        {"v": VideoInfo("v", tmp_path / "v.mp4", 120.0, 30.0)},
+        backend,
+        tmp_path,
+        100,
+        RunStats(0.0),
+    )
+
+    assert backend.scout_calls == 8
+    assert answers[0]["answer"] == "yes"
+    assert traces[0]["errors"] == ["scout_call[0]: one corrupt contact sheet"]

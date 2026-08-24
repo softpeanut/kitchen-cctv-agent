@@ -382,6 +382,44 @@ def _candidate_timestamps(raw: Mapping[str, Any], duration: float) -> list[float
     return result
 
 
+def parse_candidate_timestamps(text: str, duration: float) -> list[float]:
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char not in "[{":
+            continue
+        try:
+            value, _ = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return _candidate_timestamps(value, duration)
+        if isinstance(value, list):
+            return _candidate_timestamps({"candidates": value}, duration)
+    raise ValueError("model output did not contain a candidate JSON object or array")
+
+
+def merge_candidate_timestamps(
+    groups: Sequence[Sequence[float]], limit: int = 3, minimum_gap: float = 0.5
+) -> list[float]:
+    result: list[float] = []
+    for group in groups:
+        for timestamp in group:
+            if all(abs(timestamp - old) >= minimum_gap for old in result):
+                result.append(timestamp)
+    return evenly_bounded_items(result, limit)
+
+
+def evenly_bounded_items(values: Sequence[Any], limit: int) -> list[Any]:
+    if limit <= 0 or not values:
+        return []
+    if limit == 1:
+        return [values[len(values) // 2]]
+    if len(values) <= limit:
+        return list(values)
+    indexes = [round(index * (len(values) - 1) / (limit - 1)) for index in range(limit)]
+    return [values[index] for index in indexes]
+
+
 def answer_questions(
     questions: Sequence[Question],
     videos: Mapping[str, VideoInfo],
@@ -427,20 +465,31 @@ def answer_questions(
                     '"reason": short string}]}. Return at most 4 candidates. '
                     "Use only timestamps printed on the images; use an empty list if no likely evidence."
                 )
-                stats.model_calls += 1
-                scout_raw = backend.ask(coarse_sheets, scout_prompt)
-                trace["scout_output"] = scout_raw
-                try:
-                    candidates = _candidate_timestamps(parse_json_object(scout_raw), info.duration)
-                except ValueError as exc:
-                    trace["errors"].append(f"scout_parse: {exc}")
-                    candidates = []
+                scout_groups: list[list[float]] = []
+                scout_outputs: list[dict[str, Any]] = []
+                for sheet_index, sheet in enumerate(coarse_sheets):
+                    stats.model_calls += 1
+                    try:
+                        scout_raw = backend.ask([sheet], scout_prompt)
+                    except (OSError, RuntimeError, ValueError) as exc:
+                        trace["errors"].append(f"scout_call[{sheet_index}]: {exc}")
+                        scout_groups.append([])
+                        continue
+                    scout_outputs.append({"sheet": sheet_index, "output": scout_raw})
+                    try:
+                        group = parse_candidate_timestamps(scout_raw, info.duration)[:1]
+                    except ValueError as exc:
+                        trace["errors"].append(f"scout_parse[{sheet_index}]: {exc}")
+                        group = []
+                    scout_groups.append(group)
+                trace["scout_outputs"] = scout_outputs
+                candidates = merge_candidate_timestamps(scout_groups)
                 if candidates:
                     for candidate in candidates[:3]:
                         for offset in (-2.0, -1.0, 0.0, 1.0, 2.0):
                             selected.append(frames.frame(question.video_id, candidate + offset))
                 else:
-                    selected = coarse_refs
+                    selected = evenly_bounded_items(coarse_refs, 18)
 
             final_sheets = [
                 contact_sheet(
