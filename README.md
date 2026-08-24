@@ -14,9 +14,13 @@ loading with `HF_HUB_OFFLINE=1`:
 HF_HUB_OFFLINE=1 uv run python answer.py --videos ./videos --questions questions.json --out answers.json --log run_log.json
 ```
 
-The agent validates inputs before loading the model, samples no more than the scaled 1,500-frame/hour budget, routes explicit-time questions directly to nearby frames, and uses sparse contact sheets plus local refinement for temporal questions. Every answer includes inspected evidence timestamps or returns `not_visible`.
+The agent validates inputs before loading the model, samples no more than the scaled
+1,500-frame/hour budget, routes explicit-time questions directly to nearby frames, and uses a
+bounded whole-video sample for temporal questions. Every answer includes an inspected evidence
+timestamp or returns `not_visible`.
 
-Default model: `mlx-community/Qwen2.5-VL-3B-Instruct-4bit`.
+Default model: `mlx-community/Qwen3.5-4B-4bit`. The upstream Qwen3.5-4B model is
+Apache-2.0 licensed, and the locked MLX-VLM 0.6.15 runtime supports its multimodal architecture.
 
 ## Verification
 
@@ -44,13 +48,23 @@ was also replayed against Pexels video 8627112 using
 [`validation-pexels.questions.json`](validation-pexels.questions.json). The source shows a
 bareheaded chef cutting vegetables and is free to use under the Pexels license. The cached-only
 run returned the expected `no` for cap/hairnet and `yes` for cutting, used the full 6-frame scaled
-budget across both questions, made 2 local model calls, completed in 78.578 seconds, and retained
+budget across both questions, made 2 local model calls, completed in 46.339 seconds, and retained
 `$0.00` estimated API cost. The temporary source MP4 SHA-256 was
 `34f610feabd26df1273d6f97105213bef8d7f91e382e870511fbf31838c81a1e`.
+
+The final default model was evaluated against the Builderr-linked Chinese Commercial Kitchen
+overhead cutting video with [`validation-commercial.questions.json`](validation-commercial.questions.json).
+It matched all four independently labelled answers: one active person, no cap or hairnet,
+cauliflower being cut at 04:02, and cauliflower as the last ingredient worked on. The cached-only
+run completed in 18.186 seconds using 14 unique frames, 4 local model calls, timestamped evidence,
+and `$0.00` API cost. The video is not redistributed here and remains available from its source:
+
+https://huggingface.co/datasets/nova-dynamics/Chinese_Commercial_Kitchen_Manipulation_Dataset_Preview
 
 External contracts and implementation references:
 
 - Builderr challenge: https://builderr.ai/kitchen-video
 - Technical specification: https://builderr.ai/kitchen-video-challenge-draft.md
 - MLX-VLM multi-image API: https://github.com/Blaizzy/mlx-vlm
+- Qwen3.5-4B model card and license: https://huggingface.co/Qwen/Qwen3.5-4B
 - Pexels validation video: https://www.pexels.com/video/a-chef-cutting-ingredients-in-a-kitchen-8627112/

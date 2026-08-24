@@ -477,7 +477,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "jinja2", specifier = ">=3.1" },
-    { name = "mlx-vlm", specifier = ">=0.3.9" },
+    { name = "mlx-vlm", specifier = ">=0.6.15,<0.7" },
     { name = "opencv-python", specifier = ">=4.10,<5" },
     { name = "pillow", specifier = ">=10.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
