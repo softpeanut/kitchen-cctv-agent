@@ -12,7 +12,7 @@ from typing import Any, Protocol
 import cv2
 from PIL import Image, ImageDraw, ImageFont
 
-MODEL_ID = "mlx-community/Qwen3.5-4B-4bit"
+MODEL_ID = "mlx-community/Qwen2.5-VL-3B-Instruct-4bit"
 FRAMES_PER_HOUR = 1_500
 CONTACT_COLUMNS = 3
 CONTACT_ROWS = 2
