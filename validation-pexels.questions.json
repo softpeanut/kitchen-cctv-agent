@@ -1,0 +1,14 @@
+[
+  {
+    "id": "pexels-headwear",
+    "video_id": "pexels-chef-cutting",
+    "type": "yes_no",
+    "question": "At 00:05, is the chef visibly wearing a cap or hairnet?"
+  },
+  {
+    "id": "pexels-cutting-action",
+    "video_id": "pexels-chef-cutting",
+    "type": "yes_no",
+    "question": "Does the chef cut vegetables at any point in this video?"
+  }
+]

@@ -20,12 +20,11 @@ from kitchen_agent import (
     evenly_bounded_items,
     extract_explicit_timestamp,
     load_questions,
-    merge_candidate_timestamps,
     normalize_answer,
-    parse_candidate_timestamps,
     parse_evidence_seconds,
     parse_json_object,
     question_route,
+    question_specific_guidance,
 )
 
 
@@ -64,14 +63,18 @@ def test_parse_json_object_ignores_surrounding_prose() -> None:
     )
 
 
-def test_parse_candidate_timestamps_accepts_model_array_variant() -> None:
-    text = '```json\n[{"timestamp": 12.5, "reason": "event"}]\n```'
-    assert parse_candidate_timestamps(text, 20.0) == [12.5]
-
-
 def test_normalize_answer_rejects_invalid_count() -> None:
     question = Question("q", "v", "count", "How many?")
     assert normalize_answer({"answer": -2, "confidence": 4}, question) == ("not_visible", 1.0)
+
+
+def test_headwear_guidance_distinguishes_bare_head_from_covering() -> None:
+    guidance = question_specific_guidance(
+        Question("q", "v", "yes_no", "Is the worker wearing a cap or hairnet?")
+    )
+    assert "bare or bald head" in guidance
+    assert "fabric or mesh covering" in guidance
+    assert "scalp skin is visible" in guidance
 
 
 @pytest.mark.parametrize(
@@ -97,7 +100,16 @@ def test_normalize_answer_rejects_invalid_structured_object(answer: object) -> N
 
 @pytest.mark.parametrize(
     ("value", "expected"),
-    [(5, 5.0), ("5.00", 5.0), ("t=5.00s", 5.0), ("at five seconds", None), (-1, None)],
+    [
+        (5, 5.0),
+        ("5.00", 5.0),
+        ("t=5.00s", 5.0),
+        ("00:05", 5.0),
+        ("01:02:03", 3_723.0),
+        ("99:99", None),
+        ("at five seconds", None),
+        (-1, None),
+    ],
 )
 def test_parse_evidence_seconds(value: object, expected: float | None) -> None:
     assert parse_evidence_seconds(value) == expected
@@ -134,14 +146,6 @@ def test_frame_store_enforces_unique_frame_budget(
     assert stats.frames_processed == 1
 
 
-def test_merge_candidate_timestamps_preserves_sheet_order_and_deduplicates() -> None:
-    assert merge_candidate_timestamps([[10.0], [10.2], [20.0], [30.0], [40.0]]) == [
-        10.0,
-        30.0,
-        40.0,
-    ]
-
-
 def test_evenly_bounded_items_keeps_endpoints() -> None:
     selected = evenly_bounded_items(list(range(48)), 18)
     assert selected[0] == 0
@@ -150,7 +154,7 @@ def test_evenly_bounded_items_keeps_endpoints() -> None:
     assert evenly_bounded_items(list(range(5)), 1) == [2]
 
 
-def test_temporal_scout_failure_does_not_abort_remaining_sheets(
+def test_temporal_route_uses_one_model_call_and_one_evidence_sheet(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     class FakeFrameStore:
@@ -164,18 +168,19 @@ def test_temporal_scout_failure_does_not_abort_remaining_sheets(
         model_id = "fake"
 
         def __init__(self) -> None:
-            self.scout_calls = 0
+            self.calls = 0
+            self.image_counts: list[int] = []
 
-        def ask(self, _images: object, prompt: str) -> str:
-            if "locating evidence" in prompt:
-                self.scout_calls += 1
-                if self.scout_calls == 1:
-                    raise RuntimeError("one corrupt contact sheet")
-                return '{"candidates":[]}'
+        def ask(self, images: object, _prompt: str) -> str:
+            self.calls += 1
+            assert isinstance(images, list)
+            self.image_counts.append(len(images))
             return '{"answer":"yes","confidence":0.8,"evidence_timestamp":0}'
 
     monkeypatch.setattr("kitchen_agent.FrameStore", FakeFrameStore)
-    monkeypatch.setattr("kitchen_agent.contact_sheet", lambda _frames, output, _title: output)
+    monkeypatch.setattr(
+        "kitchen_agent.contact_sheet", lambda _frames, output, _title, **_kwargs: output
+    )
     backend = FakeBackend()
 
     answers, traces = answer_questions(
@@ -187,6 +192,63 @@ def test_temporal_scout_failure_does_not_abort_remaining_sheets(
         RunStats(0.0),
     )
 
-    assert backend.scout_calls == 8
+    assert backend.calls == 1
+    assert backend.image_counts == [1]
     assert answers[0]["answer"] == "yes"
-    assert traces[0]["errors"] == ["scout_call[0]: one corrupt contact sheet"]
+    assert traces[0]["errors"] == []
+
+
+def test_questions_share_small_frame_budget_without_starving_temporal_route(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FakeFrameStore:
+        def __init__(
+            self,
+            _videos: object,
+            _root: Path,
+            frame_budget: int,
+            stats: RunStats,
+        ) -> None:
+            self.frame_budget = frame_budget
+            self.stats = stats
+            self.cache: dict[tuple[str, int], FrameRef] = {}
+
+        def frame(self, video_id: str, timestamp: float) -> FrameRef:
+            key = (video_id, round(timestamp * 1_000))
+            if key not in self.cache:
+                if self.stats.frames_processed >= self.frame_budget:
+                    raise BudgetExhausted("test budget exhausted")
+                self.cache[key] = FrameRef(video_id, timestamp, tmp_path / f"{timestamp:.2f}.jpg")
+                self.stats.frames_processed += 1
+            return self.cache[key]
+
+    class FakeBackend:
+        model_id = "fake"
+
+        def ask(self, _images: object, prompt: str) -> str:
+            if "locating evidence" in prompt:
+                return "[]"
+            timestamp = 5 if "wearing a cap" in prompt else 8
+            return json.dumps({"answer": "yes", "confidence": 0.8, "evidence_timestamp": timestamp})
+
+    monkeypatch.setattr("kitchen_agent.FrameStore", FakeFrameStore)
+    monkeypatch.setattr(
+        "kitchen_agent.contact_sheet", lambda _frames, output, _title, **_kwargs: output
+    )
+    stats = RunStats(0.0)
+
+    answers, traces = answer_questions(
+        [
+            Question("headwear", "v", "yes_no", "At 00:05, is the chef wearing a cap?"),
+            Question("action", "v", "yes_no", "Does the chef cut vegetables?"),
+        ],
+        {"v": VideoInfo("v", tmp_path / "v.mp4", 16.0, 30.0)},
+        FakeBackend(),
+        tmp_path,
+        6,
+        stats,
+    )
+
+    assert [answer["answer"] for answer in answers] == ["yes", "yes"]
+    assert stats.frames_processed == 6
+    assert not traces[1]["errors"]

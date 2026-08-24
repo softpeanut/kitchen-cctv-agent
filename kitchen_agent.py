@@ -92,7 +92,7 @@ class MlxVisionBackend:
             self._processor,
             formatted,
             image_paths,
-            max_tokens=320,
+            max_tokens=160,
             temperature=0.0,
             verbose=False,
         )
@@ -263,6 +263,13 @@ def parse_evidence_seconds(value: Any) -> float | None:
         return result if math.isfinite(result) and result >= 0 else None
     if not isinstance(value, str):
         return None
+    clock = EXPLICIT_TIME_RE.fullmatch(value.strip())
+    if clock is not None:
+        hours = int(clock.group(1) or 0)
+        minutes = int(clock.group(2))
+        seconds = int(clock.group(3))
+        if minutes < 60 and seconds < 60:
+            return float(hours * 3_600 + minutes * 60 + seconds)
     match = EVIDENCE_SECONDS_RE.fullmatch(value)
     if match is None:
         return None
@@ -330,12 +337,16 @@ def evenly_spaced(duration: float, count: int) -> list[float]:
     return [margin + usable * index / (count - 1) for index in range(count)]
 
 
-def contact_sheet(frames: Sequence[FrameRef], output: Path, title: str) -> Path:
+def contact_sheet(
+    frames: Sequence[FrameRef], output: Path, title: str, columns: int = CONTACT_COLUMNS
+) -> Path:
     if not frames:
         raise ValueError("contact sheet needs at least one frame")
-    cell_width = CONTACT_WIDTH // CONTACT_COLUMNS
+    if columns <= 0:
+        raise ValueError("contact sheet columns must be positive")
+    cell_width = CONTACT_WIDTH // columns
     cell_height = int(cell_width * 9 / 16) + 34
-    rows = math.ceil(len(frames) / CONTACT_COLUMNS)
+    rows = math.ceil(len(frames) / columns)
     canvas = Image.new("RGB", (CONTACT_WIDTH, rows * cell_height + 38), "white")
     draw = ImageDraw.Draw(canvas)
     font = ImageFont.load_default(size=18)
@@ -343,8 +354,8 @@ def contact_sheet(frames: Sequence[FrameRef], output: Path, title: str) -> Path:
     for index, frame in enumerate(frames):
         image = Image.open(frame.path).convert("RGB")
         image.thumbnail((cell_width, cell_height - 34))
-        x = (index % CONTACT_COLUMNS) * cell_width
-        y = 38 + (index // CONTACT_COLUMNS) * cell_height
+        x = (index % columns) * cell_width
+        y = 38 + (index // columns) * cell_height
         canvas.paste(image, (x, y))
         draw.rectangle((x, y, x + 185, y + 28), fill="black")
         draw.text((x + 6, y + 5), f"t={frame.timestamp:.2f}s", fill="white", font=font)
@@ -366,47 +377,18 @@ def answer_type_instruction(question: Question) -> str:
     return 'answer must be a short scalar value or "not_visible"'
 
 
-def _candidate_timestamps(raw: Mapping[str, Any], duration: float) -> list[float]:
-    candidates = raw.get("candidates", [])
-    if not isinstance(candidates, list):
-        return []
-    result: list[float] = []
-    for item in candidates[:4]:
-        value = item.get("timestamp") if isinstance(item, dict) else item
-        try:
-            timestamp = float(value)
-        except (TypeError, ValueError):
-            continue
-        if 0 <= timestamp <= duration and all(abs(timestamp - old) >= 0.5 for old in result):
-            result.append(timestamp)
-    return result
-
-
-def parse_candidate_timestamps(text: str, duration: float) -> list[float]:
-    decoder = json.JSONDecoder()
-    for index, char in enumerate(text):
-        if char not in "[{":
-            continue
-        try:
-            value, _ = decoder.raw_decode(text[index:])
-        except json.JSONDecodeError:
-            continue
-        if isinstance(value, dict):
-            return _candidate_timestamps(value, duration)
-        if isinstance(value, list):
-            return _candidate_timestamps({"candidates": value}, duration)
-    raise ValueError("model output did not contain a candidate JSON object or array")
-
-
-def merge_candidate_timestamps(
-    groups: Sequence[Sequence[float]], limit: int = 3, minimum_gap: float = 0.5
-) -> list[float]:
-    result: list[float] = []
-    for group in groups:
-        for timestamp in group:
-            if all(abs(timestamp - old) >= minimum_gap for old in result):
-                result.append(timestamp)
-    return evenly_bounded_items(result, limit)
+def question_specific_guidance(question: Question) -> str:
+    lowered = question.question.lower()
+    if any(term in lowered for term in ("cap", "hairnet", "headwear", "head covering")):
+        return (
+            " For headwear checks, inspect each visible person's head separately. "
+            "A bare or bald head, visible hair, a hood resting behind the head, or a uniform "
+            "collar is not a cap or hairnet. Count or answer yes only when a fabric or mesh "
+            "covering is visibly worn on the head. If scalp skin is visible, that person is "
+            "not wearing a cap or hairnet. Never infer headwear merely because the person is "
+            "a chef or wears a kitchen uniform."
+        )
+    return ""
 
 
 def evenly_bounded_items(values: Sequence[Any], limit: int) -> list[Any]:
@@ -432,79 +414,47 @@ def answer_questions(
     answers: list[dict[str, Any]] = []
     traces: list[dict[str, Any]] = []
 
-    for question in questions:
+    for question_index, question in enumerate(questions):
         route = question_route(question)
         info = videos[question.video_id]
         selected: list[FrameRef] = []
         trace: dict[str, Any] = {"id": question.id, "route": route, "errors": []}
         try:
+            questions_remaining = len(questions) - question_index
+            remaining_budget = frame_budget - stats.frames_processed
+            question_allowance = max(1, remaining_budget // questions_remaining)
             explicit = extract_explicit_timestamp(question.question)
             if explicit is not None:
                 radius = 2.0 if route == "ocr_at_time" else 1.0
+                offsets = evenly_bounded_items((-radius, 0.0, radius), min(3, question_allowance))
                 selected = [
-                    frames.frame(question.video_id, explicit + offset)
-                    for offset in (-radius, 0.0, radius)
+                    frames.frame(question.video_id, explicit + offset) for offset in offsets
                 ]
             else:
-                coarse_refs = [
+                selected = [
                     frames.frame(question.video_id, timestamp)
-                    for timestamp in evenly_spaced(info.duration, 48)
+                    for timestamp in evenly_spaced(info.duration, min(6, question_allowance))
                 ]
-                coarse_sheets = [
-                    contact_sheet(
-                        coarse_refs[index : index + CONTACT_COLUMNS * CONTACT_ROWS],
-                        work_dir / f"{question.id}-coarse-{index // 6:02d}.jpg",
-                        f"{question.video_id} coarse scan",
-                    )
-                    for index in range(0, len(coarse_refs), CONTACT_COLUMNS * CONTACT_ROWS)
-                ]
-                scout_prompt = (
-                    "You are locating evidence in timestamp-labelled fixed-camera kitchen frames. "
-                    f"Question: {question.question}\n"
-                    'Return JSON only: {"candidates":[{"timestamp": number, '
-                    '"reason": short string}]}. Return at most 4 candidates. '
-                    "Use only timestamps printed on the images; use an empty list if no likely evidence."
-                )
-                scout_groups: list[list[float]] = []
-                scout_outputs: list[dict[str, Any]] = []
-                for sheet_index, sheet in enumerate(coarse_sheets):
-                    stats.model_calls += 1
-                    try:
-                        scout_raw = backend.ask([sheet], scout_prompt)
-                    except (OSError, RuntimeError, ValueError) as exc:
-                        trace["errors"].append(f"scout_call[{sheet_index}]: {exc}")
-                        scout_groups.append([])
-                        continue
-                    scout_outputs.append({"sheet": sheet_index, "output": scout_raw})
-                    try:
-                        group = parse_candidate_timestamps(scout_raw, info.duration)[:1]
-                    except ValueError as exc:
-                        trace["errors"].append(f"scout_parse[{sheet_index}]: {exc}")
-                        group = []
-                    scout_groups.append(group)
-                trace["scout_outputs"] = scout_outputs
-                candidates = merge_candidate_timestamps(scout_groups)
-                if candidates:
-                    for candidate in candidates[:3]:
-                        for offset in (-2.0, -1.0, 0.0, 1.0, 2.0):
-                            selected.append(frames.frame(question.video_id, candidate + offset))
-                else:
-                    selected = evenly_bounded_items(coarse_refs, 18)
 
+            guidance = question_specific_guidance(question)
+            detailed_headwear = bool(guidance) and explicit is not None
+            evidence_frames = [selected[len(selected) // 2]] if detailed_headwear else selected
             final_sheets = [
                 contact_sheet(
-                    selected[index : index + CONTACT_COLUMNS * CONTACT_ROWS],
-                    work_dir / f"{question.id}-evidence-{index // 6:02d}.jpg",
+                    evidence_frames,
+                    work_dir / f"{question.id}-evidence.jpg",
                     f"Evidence for {question.id}",
+                    columns=1 if detailed_headwear else CONTACT_COLUMNS,
                 )
-                for index in range(0, len(selected), CONTACT_COLUMNS * CONTACT_ROWS)
             ]
             prompt = (
                 "Answer one operational question from timestamp-labelled kitchen CCTV frames. "
                 "Do not infer details outside the inspected images. If the named attribute, text, "
                 "person, object, or full event is not visibly supported, answer not_visible.\n"
                 f"Question: {question.question}\nType rule: {answer_type_instruction(question)}.\n"
+                f"Visual guidance:{guidance}\n"
                 "Return JSON only with keys answer, confidence, evidence_timestamp. "
+                "confidence must be a JSON number from 0.0 through 1.0, never a word. "
                 "evidence_timestamp must be one timestamp printed on an image, or null for not_visible."
             )
             stats.model_calls += 1

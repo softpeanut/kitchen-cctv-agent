@@ -39,8 +39,18 @@ An independent cached-only rerun on 2026-08-22 returned the same answer with evi
 cost. The source MP4 SHA-256 was
 `f63822f0f778a305fbdad127acc98bf09c06c14110f634860e50387e66877d4e`.
 
+After Builderr's directional evaluation identified headwear and temporal-action misses, the agent
+was also replayed against Pexels video 8627112 using
+[`validation-pexels.questions.json`](validation-pexels.questions.json). The source shows a
+bareheaded chef cutting vegetables and is free to use under the Pexels license. The cached-only
+run returned the expected `no` for cap/hairnet and `yes` for cutting, used the full 6-frame scaled
+budget across both questions, made 2 local model calls, completed in 46.339 seconds, and retained
+`$0.00` estimated API cost. The temporary source MP4 SHA-256 was
+`34f610feabd26df1273d6f97105213bef8d7f91e382e870511fbf31838c81a1e`.
+
 External contracts and implementation references:
 
 - Builderr challenge: https://builderr.ai/kitchen-video
 - Technical specification: https://builderr.ai/kitchen-video-challenge-draft.md
 - MLX-VLM multi-image API: https://github.com/Blaizzy/mlx-vlm
+- Pexels validation video: https://www.pexels.com/video/a-chef-cutting-ingredients-in-a-kitchen-8627112/
