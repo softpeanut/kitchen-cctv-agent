@@ -250,6 +250,7 @@ def test_headwear_count_uses_negative_qualification_gate(
     assert answers[0]["answer"] == 0
     assert len(backend.prompts) == 1
     assert "Qualification gate" in backend.prompts[0]
+    assert "JSON number from 0.0 through 1.0" in backend.prompts[0]
     assert traces[0]["errors"] == []
 
 
