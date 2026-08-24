@@ -82,6 +82,7 @@ def test_headwear_guidance_distinguishes_bare_head_from_covering() -> None:
     assert "scalp skin is visible" in guidance
     assert "answer no" in guidance
     assert "reserve not_visible" in guidance
+    assert "using or nearest that named area" in guidance
 
 
 def test_headwear_count_guidance_counts_only_qualifying_people() -> None:
@@ -251,7 +252,7 @@ def test_headwear_count_uses_negative_qualification_gate(
 
     assert answers[0]["answer"] == 0
     assert len(backend.prompts) == 1
-    assert "Headwear qualification" in backend.prompts[0]
+    assert "Qualification gate" in backend.prompts[0]
     assert "elapsed video time" in backend.prompts[0]
     assert "JSON number from 0.0 through 1.0" in backend.prompts[0]
     assert traces[0]["errors"] == []
@@ -301,53 +302,10 @@ def test_headwear_count_uses_typed_count_after_positive_gate(
 
     assert answers[0]["answer"] == 2
     assert len(backend.prompts) == 2
-    assert "Headwear qualification" in backend.prompts[0]
+    assert "Qualification gate" in backend.prompts[0]
     assert "elapsed video time" in backend.prompts[0]
     assert "non-negative integer" in backend.prompts[1]
     assert "elapsed video time" in backend.prompts[1]
-    assert traces[0]["errors"] == []
-
-
-def test_headwear_yes_no_uses_qualification_result(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    class FakeFrameStore:
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            pass
-
-        def frame(self, video_id: str, timestamp: float) -> FrameRef:
-            return FrameRef(video_id, timestamp, tmp_path / f"{timestamp:.2f}.jpg")
-
-    class FakeBackend:
-        model_id = "fake"
-
-        def __init__(self) -> None:
-            self.prompts: list[str] = []
-
-        def ask(self, _images: object, prompt: str) -> str:
-            self.prompts.append(prompt)
-            return '{"answer":"no","confidence":0.8,"evidence_timestamp":5}'
-
-    monkeypatch.setattr("kitchen_agent.FrameStore", FakeFrameStore)
-    monkeypatch.setattr(
-        "kitchen_agent.contact_sheet", lambda _frames, output, _title, **_kwargs: output
-    )
-    backend = FakeBackend()
-
-    answers, traces = answer_questions(
-        [Question("q", "v", "yes_no", "At 00:05, does the cook wear a cap or hairnet?")],
-        {"v": VideoInfo("v", tmp_path / "v.mp4", 10.0, 30.0)},
-        backend,
-        tmp_path,
-        10,
-        RunStats(0.0),
-    )
-
-    assert answers[0]["answer"] == "no"
-    assert len(backend.prompts) == 1
-    assert "person identified by the question" in backend.prompts[0]
-    assert "when the question names a station" in backend.prompts[0]
-    assert traces[0]["qualification_output"].startswith('{"answer":"no"')
     assert traces[0]["errors"] == []
 
 

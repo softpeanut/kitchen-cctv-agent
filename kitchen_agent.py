@@ -393,7 +393,9 @@ def question_specific_guidance(question: Question) -> str:
             "not wearing a cap or hairnet. Never infer headwear merely because the person is "
             "a chef or wears a kitchen uniform. When the relevant person's bare head, hair, or "
             "scalp is visible, answer no; reserve not_visible for a head that is absent, fully "
-            "occluded, or too unclear to classify."
+            "occluded, or too unclear to classify. If the question identifies a person by a "
+            "station or work area, inspect the visible person using or nearest that named area; "
+            "do not require the person's body to overlap the appliance exactly."
         )
         if question.type == "count":
             guidance += (
@@ -405,29 +407,6 @@ def question_specific_guidance(question: Question) -> str:
             )
         return guidance
     return ""
-
-
-def headwear_qualification_prompt(question: Question) -> str:
-    if question.type == "count":
-        task = (
-            "Does at least one visible person wear a fabric or mesh cap or hairnet? "
-            'The answer must be "yes", "no", or "not_visible".'
-        )
-    else:
-        task = (
-            f"Question: {question.question} Inspect the person identified by the question; when "
-            "the question names a station or work area, use the visible person using or nearest "
-            "that area. Does that person visibly wear a fabric or mesh cap or "
-            'hairnet? The answer must be "yes", "no", or "not_visible".'
-        )
-    return (
-        "Headwear qualification. Inspect every relevant visible person's head. "
-        f"{task} A bare head, visible hair or scalp, hood behind the head, and uniform collar "
-        "do not qualify. Use not_visible only if the relevant person or head cannot be seen "
-        f"clearly. {EVIDENCE_CLOCK_RULE}"
-        "Return JSON only with keys answer, confidence, evidence_timestamp. "
-        "confidence must be a JSON number from 0.0 through 1.0, never a word."
-    )
 
 
 def evenly_bounded_items(values: Sequence[Any], limit: int) -> list[Any]:
@@ -498,8 +477,16 @@ def answer_questions(
                 "evidence_timestamp must be one timestamp printed on an image, or null for not_visible."
             )
             parsed: dict[str, Any] | None = None
-            if question.type in {"count", "yes_no"} and guidance:
-                gate_prompt = headwear_qualification_prompt(question)
+            if question.type == "count" and guidance:
+                gate_prompt = (
+                    "Qualification gate for a headwear count. Inspect every visible person's head. "
+                    "Does at least one visible person wear a fabric or mesh cap or hairnet? "
+                    "A bare head, visible hair or scalp, hood behind the head, and uniform collar "
+                    f"do not qualify. {EVIDENCE_CLOCK_RULE}"
+                    "Return JSON only with keys answer, confidence, "
+                    'evidence_timestamp; answer must be "yes", "no", or "not_visible". '
+                    "confidence must be a JSON number from 0.0 through 1.0, never a word."
+                )
                 stats.model_calls += 1
                 gate_raw = backend.ask(final_sheets, gate_prompt)
                 trace["qualification_output"] = gate_raw
@@ -524,9 +511,7 @@ def answer_questions(
                     final_sheets = retry_sheets
                 gate_question = Question(question.id, question.video_id, "yes_no", gate_prompt)
                 gate_answer, gate_confidence = normalize_answer(gate_parsed, gate_question)
-                if question.type == "yes_no":
-                    parsed = gate_parsed
-                elif gate_answer == "no":
+                if gate_answer == "no":
                     parsed = {
                         "answer": 0,
                         "confidence": gate_confidence,

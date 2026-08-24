@@ -41,10 +41,9 @@ P19     combine them into one timestamped evidence sheet
 P20   enforce remaining frame budget before every sample
 P21     IF budget is exhausted -> emit `not_visible` with budget-exhausted trace
 P22   combine selected frames into one timestamped evidence sheet and CALL VLM once
-P22a  IF this is a headwear yes/no or count question, run a focused binary qualification query
-P22b    IF the declared type is yes/no -> use the qualification result
-P22c    ELSE IF no person qualifies -> return count 0 from that evidence
-P22d    ELSE -> ask the typed numeric count question
+P22a  IF this is a headwear count, first ask whether any person qualifies
+P22b    IF no person qualifies -> return count 0 from that evidence
+P22c    ELSE -> ask the typed numeric count question
 P23     IF call or strict JSON parse fails -> emit `not_visible` with failure trace
 P24   normalize answer to the declared type and clamp confidence to [0,1]
 P24a  accept evidence timestamps as seconds or validated MM:SS/HH:MM:SS clock text
@@ -82,14 +81,12 @@ flowchart TD
     G --> I
     H --> I
     I -- no --> J["Emit not_visible with trace"]
-    I -- yes --> R{"Headwear yes/no or count?"}
+    I -- yes --> R{"Headwear count?"}
     R -- no --> K["Run typed VLM query"]
     R -- yes --> S["Run qualification gate"]
-    S --> T{"Declared type?"}
-    T -- yes/no --> M["Attach qualification answer"]
-    T -- count --> U{"Any qualifying wearer?"}
-    U -- no --> M
-    U -- "yes / not_visible" --> K
+    S --> T{"Any qualifying wearer?"}
+    T -- no --> M["Attach evidence count 0"]
+    T -- "yes / not_visible" --> K
     K --> L{"Valid supported JSON?"}
     L -- no --> J
     L -- yes --> M["Attach evidence answer"]
