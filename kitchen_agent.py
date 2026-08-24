@@ -473,7 +473,8 @@ def answer_questions(
                     "Does at least one visible person wear a fabric or mesh cap or hairnet? "
                     "A bare head, visible hair or scalp, hood behind the head, and uniform collar "
                     "do not qualify. Return JSON only with keys answer, confidence, "
-                    'evidence_timestamp; answer must be "yes", "no", or "not_visible".'
+                    'evidence_timestamp; answer must be "yes", "no", or "not_visible". '
+                    "confidence must be a JSON number from 0.0 through 1.0, never a word."
                 )
                 stats.model_calls += 1
                 gate_raw = backend.ask(final_sheets, gate_prompt)
